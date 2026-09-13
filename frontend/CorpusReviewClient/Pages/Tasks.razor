@@ -1,0 +1,224 @@
+@page "/tasks"
+@inject ApiClient Api
+
+<h1>任务与分配 <span class="muted">（规则4：同一用户不能连续获得同一批次）</span></h1>
+
+@if (error is not null) { <div class="error">@error</div> }
+@if (message is not null) { <div class="success">@message</div> }
+
+<div class="card">
+    <h2>批次</h2>
+    @if (batches is not null)
+    {
+        <p>
+            @foreach (var b in batches)
+            {
+                <span class="badge">#@b.Id @b.Name</span>
+            }
+        </p>
+    }
+    <div class="row">
+        <div>
+            <label>新批次名</label>
+            <input @bind="newBatchName" />
+        </div>
+        <div><button class="secondary" @onclick="CreateBatch">创建批次</button></div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>任务</h2>
+    @if (tasks is null)
+    {
+        <p class="muted">加载中…</p>
+    }
+    else
+    {
+        <table>
+            <thead><tr><th>ID</th><th>批次</th><th>名称</th><th>状态</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var t in tasks)
+                {
+                    <tr>
+                        <td>@t.Id</td>
+                        <td>@t.BatchId</td>
+                        <td>@t.Name</td>
+                        <td>@t.Status</td>
+                        <td><button class="small" @onclick="() => SelectTask(t.Id)">分配管理</button></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+    <h3>新建任务</h3>
+    <div class="row">
+        <div>
+            <label>批次</label>
+            <select @bind="newTaskBatch">
+                @foreach (var b in batches ?? new())
+                {
+                    <option value="@b.Id">@b.Name (#@b.Id)</option>
+                }
+            </select>
+        </div>
+        <div>
+            <label>任务名</label>
+            <input @bind="newTaskName" />
+        </div>
+        <div>
+            <label>片段ID（逗号分隔）</label>
+            <input @bind="newTaskSegments" placeholder="如 1,2,3" />
+        </div>
+        <div><button @onclick="CreateTask">创建任务</button></div>
+    </div>
+</div>
+
+@if (selectedTaskId is not null)
+{
+    <div class="card">
+        <h2>任务 #@selectedTaskId 的分配</h2>
+        @if (assignments is not null)
+        {
+            @if (assignments.Count == 0) { <p class="muted">尚未分配。</p> }
+            else
+            {
+                <table>
+                    <thead><tr><th>分配ID</th><th>标注员</th><th>批次</th><th>状态</th><th>分配时间</th></tr></thead>
+                    <tbody>
+                        @foreach (var a in assignments)
+                        {
+                            <tr>
+                                <td>@a.Id</td>
+                                <td>@a.Username</td>
+                                <td>@a.BatchId</td>
+                                <td>@a.Status</td>
+                                <td>@TextUtil.FmtTime(a.AssignedAt)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        }
+        <h3>手动分配</h3>
+        <div class="row">
+            <div>
+                <label>标注员</label>
+                <select @bind="assignUser">
+                    @foreach (var u in annotators)
+                    {
+                        <option value="@u.Id">@u.DisplayName (@u.Username)</option>
+                    }
+                </select>
+            </div>
+            <div><button @onclick="Assign">分配</button></div>
+        </div>
+        <h3>自动分配（自动避开最近同批次的用户）</h3>
+        <div class="row">
+            <div>
+                <label>人数</label>
+                <input type="number" min="1" @bind="autoCount" />
+            </div>
+            <div><button class="secondary" @onclick="AutoAssign">自动分配</button></div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Batch>? batches;
+    private List<AnnotationTask>? tasks;
+    private List<AssignmentView>? assignments;
+    private List<AppUser> annotators = new();
+
+    private string newBatchName = "";
+    private string newTaskBatch = "";
+    private string newTaskName = "";
+    private string newTaskSegments = "";
+    private long? selectedTaskId;
+    private string assignUser = "";
+    private int autoCount = 1;
+    private string? error;
+    private string? message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Reload();
+        try
+        {
+            var users = await Api.Users();
+            annotators = users.Where(u => u.Role == "annotator").ToList();
+        }
+        catch (ApiException) { /* 用户列表不可用时仅影响分配下拉 */ }
+    }
+
+    private async Task Reload()
+    {
+        batches = await Api.Batches();
+        tasks = await Api.Tasks();
+    }
+
+    private async Task SelectTask(long taskId)
+    {
+        selectedTaskId = taskId;
+        error = null; message = null;
+        try { assignments = await Api.Assignments(taskId); }
+        catch (ApiException e) { error = e.Message; }
+    }
+
+    private async Task CreateBatch()
+    {
+        error = null; message = null;
+        try
+        {
+            await Api.PostAsync<Batch>("api/batches", new CreateBatchRequest(newBatchName));
+            message = $"批次「{newBatchName}」已创建";
+            newBatchName = "";
+            await Reload();
+        }
+        catch (ApiException e) { error = e.Message; }
+    }
+
+    private async Task CreateTask()
+    {
+        error = null; message = null;
+        if (!long.TryParse(newTaskBatch, out var batchId)) { error = "请选择批次"; return; }
+        var segmentIds = newTaskSegments.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(s => long.TryParse(s, out var id) ? id : -1).ToList();
+        if (segmentIds.Any(id => id < 0)) { error = "片段ID格式不正确"; return; }
+        try
+        {
+            await Api.PostAsync<AnnotationTask>("api/tasks",
+                new CreateTaskRequest(batchId, newTaskName, null, segmentIds));
+            message = $"任务「{newTaskName}」已创建";
+            newTaskName = ""; newTaskSegments = "";
+            await Reload();
+        }
+        catch (ApiException e) { error = e.Message; }
+    }
+
+    private async Task Assign()
+    {
+        error = null; message = null;
+        if (selectedTaskId is null || !long.TryParse(assignUser, out var uid)) { error = "请选择标注员"; return; }
+        try
+        {
+            await Api.PostAsync<Assignment>($"api/tasks/{selectedTaskId}/assign", new AssignRequest(uid));
+            message = "分配成功";
+            await SelectTask(selectedTaskId.Value);
+        }
+        catch (ApiException e) { error = e.Message; }  // 409：同一用户连续获得同一批次
+    }
+
+    private async Task AutoAssign()
+    {
+        error = null; message = null;
+        if (selectedTaskId is null) return;
+        try
+        {
+            var created = await Api.PostAsync<List<Assignment>>($"api/tasks/{selectedTaskId}/auto-assign",
+                new AutoAssignRequest(autoCount));
+            message = $"已自动分配 {created.Count} 人";
+            await SelectTask(selectedTaskId.Value);
+        }
+        catch (ApiException e) { error = e.Message; }
+    }
+}

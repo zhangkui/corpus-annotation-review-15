@@ -1,0 +1,136 @@
+@page "/segments/{Id:long}"
+@inject ApiClient Api
+
+@if (error is not null) { <div class="error">@error</div> }
+
+@if (segment is null)
+{
+    <p class="muted">加载中…</p>
+}
+else
+{
+    <h1>片段 #@segment.Id <span class="badge">@segment.LanguageCode</span></h1>
+
+    <div class="segment-text">@segment.Content</div>
+    <p class="muted">码点长度 @segment.CharLength · 语料库 @segment.CorpusId · 外部ID @segment.ExternalId</p>
+
+    <h2>合并标注（规则1：相同片段同一标签范围的重复标注合并展示）</h2>
+    @if (merged is not null && merged.Count > 0)
+    {
+        <table>
+            <thead>
+                <tr><th>标签</th><th>范围</th><th>标注文本</th><th>重复次数</th><th>来源（标注者 / 版本 / 备注）</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var m in merged)
+                {
+                    <tr>
+                        <td><span class="badge ok">@m.TagName</span></td>
+                        <td class="mono">[@m.StartOffset, @m.EndOffset)</td>
+                        <td>@TextUtil.SliceByCodePoints(segment.Content, m.StartOffset, m.EndOffset)</td>
+                        <td>
+                            @if (m.Count > 1)
+                            {
+                                <span class="badge warn">×@m.Count</span>
+                            }
+                            else
+                            {
+                                @m.Count
+                            }
+                        </td>
+                        <td>
+                            @foreach (var src in m.Sources)
+                            {
+                                <div>@src.Annotator · 版本 @src.VersionId @(string.IsNullOrEmpty(src.Note) ? "" : $"· {src.Note}")</div>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+    else if (merged is not null)
+    {
+        <p class="muted">该片段暂无标注。</p>
+    }
+
+    <h2>标注版本</h2>
+    @if (versions is not null && versions.Count > 0)
+    {
+        <table>
+            <thead><tr><th>版本ID</th><th>分配ID</th><th>版本号</th><th>状态</th><th>提交时间</th></tr></thead>
+            <tbody>
+                @foreach (var v in versions)
+                {
+                    <tr>
+                        <td>@v.Id</td>
+                        <td>@v.AssignmentId</td>
+                        <td>v@v.VersionNo</td>
+                        <td>@v.Status</td>
+                        <td>@TextUtil.FmtTime(v.CreatedAt)</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+    else if (versions is not null)
+    {
+        <p class="muted">暂无版本。</p>
+    }
+
+    <h2>仲裁结论</h2>
+    <p><a href="arbitrations/@segment.Id">→ 为该片段创建仲裁</a></p>
+    @if (arbitrations is not null && arbitrations.Count > 0)
+    {
+        @foreach (var arb in arbitrations)
+        {
+            <div class="card">
+                <div>
+                    <b>仲裁 #@arb.Id</b> · 仲裁员 @arb.ArbitratorName · @TextUtil.FmtTime(arb.CreatedAt)
+                </div>
+                <div class="muted">引用版本：@string.Join(", ", arb.SourceVersionIds)</div>
+                @if (!string.IsNullOrEmpty(arb.Comment)) { <div>意见：@arb.Comment</div> }
+                <table>
+                    <thead><tr><th>标签</th><th>范围</th><th>结论文本</th><th>备注</th></tr></thead>
+                    <tbody>
+                        @foreach (var c in arb.Conclusions)
+                        {
+                            <tr>
+                                <td><span class="badge ok">@c.TagName</span></td>
+                                <td class="mono">[@c.StartOffset, @c.EndOffset)</td>
+                                <td>@TextUtil.SliceByCodePoints(segment.Content, c.StartOffset, c.EndOffset)</td>
+                                <td>@c.Note</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    }
+    else if (arbitrations is not null)
+    {
+        <p class="muted">暂无仲裁结论。</p>
+    }
+}
+
+@code {
+    [Parameter] public long Id { get; set; }
+
+    private Segment? segment;
+    private List<MergedAnnotation>? merged;
+    private List<AnnotationVersion>? versions;
+    private List<Arbitration>? arbitrations;
+    private string? error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        try
+        {
+            segment = await Api.Segment(Id);
+            merged = await Api.Merged(Id);
+            versions = await Api.VersionsBySegment(Id);
+            arbitrations = await Api.ArbitrationsBySegment(Id);
+        }
+        catch (ApiException e) { error = e.Message; }
+    }
+}

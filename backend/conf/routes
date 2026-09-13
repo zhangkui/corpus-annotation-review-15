@@ -1,0 +1,55 @@
+# ==========================================================================
+# 路由 — 多语言语料标注冲突审查系统
+# ==========================================================================
+
+# 健康检查
+GET     /api/health                              controllers.HealthController.health
+
+# 用户 / 语料库
+GET     /api/users                               controllers.UserController.list
+POST    /api/users                               controllers.UserController.create
+GET     /api/corpora                             controllers.CorpusController.list
+POST    /api/corpora                             controllers.CorpusController.create
+
+# 语料片段
+GET     /api/segments                            controllers.SegmentController.list(corpusId: Option[Long] ?= None, language: Option[String] ?= None, offset: Int ?= 0, limit: Int ?= 50)
+POST    /api/segments                            controllers.SegmentController.create
+GET     /api/segments/:id                        controllers.SegmentController.get(id: Long)
+
+# 规则1：相同片段同一标签范围的重复标注合并展示
+GET     /api/segments/:id/annotations/merged     controllers.AnnotationController.merged(id: Long)
+GET     /api/segments/:id/versions               controllers.AnnotationController.versionsBySegment(id: Long)
+GET     /api/segments/:id/arbitrations           controllers.ArbitrationController.bySegment(id: Long)
+
+# 标签层级（规则2：不能成环）
+GET     /api/tags                                controllers.TagController.list
+GET     /api/tags/tree                           controllers.TagController.tree
+POST    /api/tags                                controllers.TagController.create
+PUT     /api/tags/:id/parent                     controllers.TagController.reparent(id: Long)
+
+# 批次 / 任务 / 分配（规则4：同一用户不能连续获得同一批次）
+GET     /api/batches                             controllers.TaskController.listBatches
+POST    /api/batches                             controllers.TaskController.createBatch
+GET     /api/tasks                               controllers.TaskController.listTasks
+POST    /api/tasks                               controllers.TaskController.createTask
+GET     /api/tasks/:id                           controllers.TaskController.getTask(id: Long)
+GET     /api/tasks/:id/assignments               controllers.TaskController.assignments(id: Long)
+GET     /api/tasks/:id/segments                  controllers.TaskController.taskSegments(id: Long)
+POST    /api/tasks/:id/assign                    controllers.TaskController.assign(id: Long)
+POST    /api/tasks/:id/auto-assign               controllers.TaskController.autoAssign(id: Long)
+
+# 标注版本
+POST    /api/versions                            controllers.AnnotationController.submitVersion
+GET     /api/versions/:id                        controllers.AnnotationController.getVersion(id: Long)
+
+# 仲裁（规则3：只能引用已有标注版本并生成新结论）
+POST    /api/arbitrations                        controllers.ArbitrationController.create
+GET     /api/arbitrations/:id                    controllers.ArbitrationController.get(id: Long)
+
+# 导入（规则5：校验字符偏移与语言代码）
+POST    /api/import/segments                     controllers.ImportController.importSegments
+
+# 事件流（TimescaleDB hypertable）
+GET     /api/events                              controllers.EventController.latest(limit: Int ?= 100)
+
+# 前端静态资源以外的路径一律 404（前端由 nginx 托管）

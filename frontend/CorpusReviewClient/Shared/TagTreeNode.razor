@@ -1,0 +1,17 @@
+@* 递归渲染标签树节点 *@
+<li>
+    <span class="badge">#@Node.Id</span> @Node.Name
+    @if (Node.Children.Count > 0)
+    {
+        <ul>
+            @foreach (var child in Node.Children)
+            {
+                <TagTreeNode Node="child" />
+            }
+        </ul>
+    }
+</li>
+
+@code {
+    [Parameter] public TagNode Node { get; set; } = default!;
+}

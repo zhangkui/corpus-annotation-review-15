@@ -1,0 +1,138 @@
+@page "/import"
+@inject ApiClient Api
+
+<h1>数据导入 <span class="muted">（规则5：校验字符偏移与语言代码）</span></h1>
+
+@if (error is not null) { <div class="error">@error</div> }
+
+<div class="card">
+    <div class="row">
+        <div>
+            <label>目标语料库（不存在则创建）</label>
+            <input @bind="corpus" />
+        </div>
+        <div>
+            <label>
+                <input type="checkbox" @bind="partialMode" />
+                部分导入（跳过错误行；否则整体拒绝）
+            </label>
+        </div>
+        <div>
+            <label>或选择 JSON 文件</label>
+            <InputFile OnChange="OnFileSelected" accept=".json" />
+        </div>
+    </div>
+    <label>导入 JSON（segments 数组；偏移为 Unicode 码点，左闭右开）</label>
+    <textarea rows="14" @bind="json"></textarea>
+    <p><button @onclick="Submit">校验并导入</button></p>
+</div>
+
+@if (result is not null)
+{
+    <div class="card">
+        <h2>导入结果</h2>
+        <p>
+            <span class="badge ok">成功 @result.Imported</span>
+            <span class="badge warn">跳过 @result.Skipped</span>
+            <span class="badge">错误 @result.Errors.Count</span>
+        </p>
+        @if (result.Errors.Count > 0)
+        {
+            <table>
+                <thead><tr><th>行号（从0开始）</th><th>错误</th></tr></thead>
+                <tbody>
+                    @foreach (var e in result.Errors)
+                    {
+                        <tr><td>@e.Row</td><td>@e.Message</td></tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+}
+
+@code {
+    private string corpus = "demo-news";
+    private bool partialMode;
+    private string json = """
+    {
+      "segments": [
+        {
+          "externalId": "imp-0001",
+          "languageCode": "zh-Hans",
+          "content": "特斯拉在上海建立了超级工厂。",
+          "annotations": [
+            { "tag": "机构", "startOffset": 0, "endOffset": 3 },
+            { "tag": "地名", "startOffset": 4, "endOffset": 6 }
+          ]
+        },
+        {
+          "externalId": "imp-0002",
+          "languageCode": "xx-invalid",
+          "content": "bad language code",
+          "annotations": []
+        },
+        {
+          "externalId": "imp-0003",
+          "languageCode": "en",
+          "content": "offset out of range",
+          "annotations": [
+            { "tag": "机构", "startOffset": 10, "endOffset": 99 }
+          ]
+        }
+      ]
+    }
+    """;
+    private ImportResult? result;
+    private string? error;
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        using var stream = e.File.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
+        using var reader = new StreamReader(stream);
+        json = await reader.ReadToEndAsync();
+    }
+
+    private async Task Submit()
+    {
+        error = null;
+        result = null;
+        object payload;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var hasSegments = doc.RootElement.TryGetProperty("segments", out _);
+            if (!hasSegments) { error = "JSON 中缺少 segments 数组"; return; }
+            payload = new
+            {
+                corpus,
+                partial = partialMode,
+                segments = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(json)
+                    .GetProperty("segments")
+            };
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            error = $"JSON 格式错误：{ex.Message}";
+            return;
+        }
+
+        var (ok, body) = await Api.PostRawAsync("api/import/segments", payload);
+        try
+        {
+            result = System.Text.Json.JsonSerializer.Deserialize<ImportResult>(body,
+                new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+            // 非业务响应（如 400 {"error": ...}）时按错误文本展示
+            if (result?.Errors is null)
+            {
+                result = null;
+                if (!ok) error = body;
+            }
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            result = null;
+            if (!ok) error = body;
+        }
+    }
+}

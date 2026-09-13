@@ -1,0 +1,201 @@
+@page "/arbitrations"
+@page "/arbitrations/{SegmentId:long}"
+@inject ApiClient Api
+
+<h1>仲裁审查 <span class="muted">（规则3：只能引用已有标注版本并生成新结论）</span></h1>
+
+@if (error is not null) { <div class="error">@error</div> }
+@if (message is not null) { <div class="success">@message</div> }
+
+<div class="card">
+    <div class="row">
+        <div>
+            <label>片段 ID</label>
+            <input type="number" min="1" @bind="segmentIdInput" />
+        </div>
+        <div><button @onclick="Load">加载片段</button></div>
+    </div>
+</div>
+
+@if (segment is not null)
+{
+    <div class="segment-text">@segment.Content</div>
+    <p class="muted">#@segment.Id · @segment.LanguageCode · 码点长度 @segment.CharLength</p>
+
+    <div class="card">
+        <h2>1. 选择引用的标注版本（必须已存在）</h2>
+        @if (versions is null || versions.Count == 0)
+        {
+            <p class="muted">该片段暂无标注版本，无法仲裁。</p>
+        }
+        else
+        {
+            @foreach (var v in versions)
+            {
+                <label style="display:inline-block; margin-right:16px;">
+                    <input type="checkbox"
+                           checked="@selectedVersions.Contains(v.Id)"
+                           @onchange="e => ToggleVersion(v.Id, (bool)(e.Value ?? false))" />
+                    版本 #@v.Id（v@v.VersionNo · @v.Status）
+                </label>
+            }
+        }
+    </div>
+
+    <div class="card">
+        <h2>2. 仲裁员与结论</h2>
+        <div class="row">
+            <div>
+                <label>仲裁员</label>
+                <select @bind="arbitratorId">
+                    @foreach (var u in arbitrators)
+                    {
+                        <option value="@u.Id">@u.DisplayName (@u.Username)</option>
+                    }
+                </select>
+            </div>
+            <div style="flex:1">
+                <label>仲裁意见</label>
+                <input @bind="comment" style="width:100%" />
+            </div>
+        </div>
+        <h3>结论标注（全新结论，不影响原始标注）</h3>
+        <table>
+            <thead><tr><th>标签</th><th>起始</th><th>结束</th><th>备注</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var row in conclusionRows)
+                {
+                    <tr>
+                        <td>
+                            <select @bind="row.TagId">
+                                @foreach (var t in tags ?? new())
+                                {
+                                    <option value="@t.Id">@t.Name</option>
+                                }
+                            </select>
+                        </td>
+                        <td><input type="number" min="0" @bind="row.Start" style="width:80px" /></td>
+                        <td><input type="number" min="0" @bind="row.End" style="width:80px" /></td>
+                        <td><input @bind="row.Note" /></td>
+                        <td><button class="small secondary" @onclick="() => conclusionRows.Remove(row)">删除</button></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <p>
+            <button class="secondary" @onclick="AddConclusion">+ 添加结论行</button>
+            <button @onclick="SubmitArbitration">提交仲裁</button>
+        </p>
+    </div>
+
+    <div class="card">
+        <h2>已有仲裁结论</h2>
+        @if (arbitrations is not null && arbitrations.Count > 0)
+        {
+            @foreach (var arb in arbitrations)
+            {
+                <p>
+                    <b>仲裁 #@arb.Id</b> · @arb.ArbitratorName · @TextUtil.FmtTime(arb.CreatedAt)
+                    · 引用版本 @string.Join(", ", arb.SourceVersionIds)
+                    · 结论 @arb.Conclusions.Count 条
+                </p>
+            }
+        }
+        else
+        {
+            <p class="muted">暂无。</p>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public long? SegmentId { get; set; }
+
+    private long segmentIdInput = 1;
+    private Segment? segment;
+    private List<AnnotationVersion>? versions;
+    private List<Arbitration>? arbitrations;
+    private List<Tag>? tags;
+    private List<AppUser> arbitrators = new();
+    private readonly HashSet<long> selectedVersions = new();
+    private long arbitratorId;
+    private string comment = "";
+    private string? error;
+    private string? message;
+
+    private class ConclusionRow
+    {
+        public long TagId { get; set; }
+        public int Start { get; set; }
+        public int End { get; set; }
+        public string? Note { get; set; }
+    }
+
+    private readonly List<ConclusionRow> conclusionRows = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            tags = await Api.Tags();
+            var users = await Api.Users();
+            arbitrators = users.Where(u => u.Role is "arbitrator" or "admin").ToList();
+            if (arbitrators.Count > 0) arbitratorId = arbitrators[0].Id;
+        }
+        catch (ApiException e) { error = e.Message; }
+
+        if (SegmentId is not null)
+        {
+            segmentIdInput = SegmentId.Value;
+            await Load();
+        }
+        if (conclusionRows.Count == 0) AddConclusion();
+    }
+
+    private async Task Load()
+    {
+        error = null; message = null;
+        selectedVersions.Clear();
+        try
+        {
+            segment = await Api.Segment(segmentIdInput);
+            versions = await Api.VersionsBySegment(segmentIdInput);
+            arbitrations = await Api.ArbitrationsBySegment(segmentIdInput);
+        }
+        catch (ApiException e)
+        {
+            segment = null;
+            error = e.Message;
+        }
+    }
+
+    private void ToggleVersion(long versionId, bool on)
+    {
+        if (on) selectedVersions.Add(versionId);
+        else selectedVersions.Remove(versionId);
+    }
+
+    private void AddConclusion() =>
+        conclusionRows.Add(new ConclusionRow { TagId = tags?.FirstOrDefault()?.Id ?? 0 });
+
+    private async Task SubmitArbitration()
+    {
+        error = null; message = null;
+        if (segment is null) { error = "请先加载片段"; return; }
+        if (selectedVersions.Count == 0) { error = "请至少引用一个已有标注版本"; return; }
+        var req = new CreateArbitrationRequest(
+            segment.Id,
+            arbitratorId,
+            selectedVersions.OrderBy(x => x).ToList(),
+            string.IsNullOrWhiteSpace(comment) ? null : comment,
+            conclusionRows.Select(r => new ConclusionInput(r.TagId, r.Start, r.End,
+                string.IsNullOrWhiteSpace(r.Note) ? null : r.Note)).ToList());
+        try
+        {
+            var arb = await Api.PostAsync<Arbitration>("api/arbitrations", req);
+            message = $"仲裁 #{arb.Id} 已创建（引用版本 {string.Join(", ", arb.SourceVersionIds)}）";
+            await Load();
+        }
+        catch (ApiException e) { error = e.Message; }
+    }
+}

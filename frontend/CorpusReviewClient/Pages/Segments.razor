@@ -1,0 +1,85 @@
+@page "/segments"
+@inject ApiClient Api
+
+<h1>语料片段</h1>
+
+<div class="card">
+    <div class="row">
+        <div>
+            <label>语料库</label>
+            <select @bind="corpusFilter">
+                <option value="">全部</option>
+                @if (corpora is not null)
+                {
+                    @foreach (var c in corpora)
+                    {
+                        <option value="@c.Id">@c.Name</option>
+                    }
+                }
+            </select>
+        </div>
+        <div>
+            <label>语言代码（如 zh-Hans / en / ja）</label>
+            <input @bind="languageFilter" placeholder="留空为全部" />
+        </div>
+        <div>
+            <button @onclick="Load">查询</button>
+        </div>
+    </div>
+</div>
+
+@if (error is not null) { <div class="error">@error</div> }
+
+@if (segments is null)
+{
+    <p class="muted">加载中…</p>
+}
+else
+{
+    <table>
+        <thead>
+            <tr><th>ID</th><th>语言</th><th>码点长度</th><th>内容预览</th><th>外部ID</th><th></th></tr>
+        </thead>
+        <tbody>
+            @foreach (var s in segments)
+            {
+                <tr>
+                    <td>@s.Id</td>
+                    <td><span class="badge">@s.LanguageCode</span></td>
+                    <td>@s.CharLength</td>
+                    <td>@(s.Content.Length > 40 ? s.Content[..40] + "…" : s.Content)</td>
+                    <td class="mono">@s.ExternalId</td>
+                    <td><a href="segments/@s.Id">详情 / 合并标注</a></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    @if (segments.Count == 0) { <p class="muted">没有符合条件的片段。</p> }
+}
+
+@code {
+    private List<Segment>? segments;
+    private List<Corpus>? corpora;
+    private string languageFilter = "";
+    private string corpusFilter = "";
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { corpora = await Api.Corpora(); } catch (ApiException) { /* 忽略，仅用于过滤下拉 */ }
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        error = null;
+        try
+        {
+            long? corpusId = long.TryParse(corpusFilter, out var cid) ? cid : null;
+            segments = await Api.Segments(
+                string.IsNullOrWhiteSpace(languageFilter) ? null : languageFilter.Trim(),
+                corpusId);
+        }
+        catch (ApiException e) { error = e.Message; }
+    }
+}

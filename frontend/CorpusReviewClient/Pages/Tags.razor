@@ -1,0 +1,121 @@
+@page "/tags"
+@inject ApiClient Api
+
+<h1>标签层级 <span class="muted">（规则2：层级不能形成环）</span></h1>
+
+@if (error is not null) { <div class="error">@error</div> }
+@if (message is not null) { <div class="success">@message</div> }
+
+<div class="card">
+    <h2>标签树</h2>
+    @if (tree is null)
+    {
+        <p class="muted">加载中…</p>
+    }
+    else
+    {
+        <div class="tag-tree">
+            <ul>
+                @foreach (var node in tree)
+                {
+                    <TagTreeNode Node="node" />
+                }
+            </ul>
+        </div>
+    }
+</div>
+
+<div class="card">
+    <h2>新建标签</h2>
+    <div class="row">
+        <div>
+            <label>名称</label>
+            <input @bind="newName" />
+        </div>
+        <div>
+            <label>父标签</label>
+            <select @bind="newParent">
+                <option value="">（根标签）</option>
+                @foreach (var t in flatTags ?? new())
+                {
+                    <option value="@t.Id">@t.Name (#@t.Id)</option>
+                }
+            </select>
+        </div>
+        <div><button @onclick="CreateTag">创建</button></div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>改挂父标签（触发环检测）</h2>
+    <div class="row">
+        <div>
+            <label>标签</label>
+            <select @bind="moveTag">
+                @foreach (var t in flatTags ?? new())
+                {
+                    <option value="@t.Id">@t.Name (#@t.Id)</option>
+                }
+            </select>
+        </div>
+        <div>
+            <label>新父标签</label>
+            <select @bind="moveParent">
+                <option value="">（根标签）</option>
+                @foreach (var t in flatTags ?? new())
+                {
+                    <option value="@t.Id">@t.Name (#@t.Id)</option>
+                }
+            </select>
+        </div>
+        <div><button @onclick="Reparent">改挂</button></div>
+    </div>
+    <p class="muted">试试把「实体」挂到「人名」下面 —— 会因成环被拒绝（409）。</p>
+</div>
+
+@code {
+    private List<TagNode>? tree;
+    private List<Tag>? flatTags;
+    private string newName = "";
+    private string newParent = "";
+    private string moveTag = "";
+    private string moveParent = "";
+    private string? error;
+    private string? message;
+
+    protected override Task OnInitializedAsync() => Reload();
+
+    private async Task Reload()
+    {
+        tree = await Api.TagTree();
+        flatTags = await Api.Tags();
+    }
+
+    private static long? ParseId(string v) => long.TryParse(v, out var id) ? id : null;
+
+    private async Task CreateTag()
+    {
+        error = null; message = null;
+        try
+        {
+            await Api.PostAsync<Tag>("api/tags", new CreateTagRequest(newName, ParseId(newParent)));
+            message = $"标签「{newName}」已创建";
+            newName = "";
+            await Reload();
+        }
+        catch (ApiException e) { error = e.Message; }
+    }
+
+    private async Task Reparent()
+    {
+        error = null; message = null;
+        if (ParseId(moveTag) is not long tagId) { error = "请选择标签"; return; }
+        try
+        {
+            await Api.PutAsync<Tag>($"api/tags/{tagId}/parent", new ReparentRequest(ParseId(moveParent)));
+            message = "改挂成功";
+            await Reload();
+        }
+        catch (ApiException e) { error = e.Message; }
+    }
+}

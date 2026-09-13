@@ -1,0 +1,154 @@
+@page "/submit-version"
+@inject ApiClient Api
+
+<h1>提交标注版本</h1>
+
+@if (error is not null) { <div class="error">@error</div> }
+@if (message is not null) { <div class="success">@message</div> }
+
+<div class="card">
+    <div class="row">
+        <div>
+            <label>任务</label>
+            <select value="@selectedTask" @onchange="OnTaskChanged">
+                <option value="">请选择</option>
+                @foreach (var t in tasks ?? new())
+                {
+                    <option value="@t.Id">#@t.Id @t.Name（批次 @t.BatchId）</option>
+                }
+            </select>
+        </div>
+        <div>
+            <label>分配（我的任务）</label>
+            <select @bind="selectedAssignment">
+                <option value="">请选择</option>
+                @foreach (var a in assignments ?? new())
+                {
+                    <option value="@a.Id">分配 #@a.Id — @a.Username</option>
+                }
+            </select>
+        </div>
+    </div>
+</div>
+
+@if (taskSegments is not null && tags is not null)
+{
+    <div class="card">
+        <h2>标注行（偏移为 Unicode 码点，左闭右开）</h2>
+        @foreach (var seg in taskSegments)
+        {
+            <div class="muted mono">#@seg.Id [@seg.LanguageCode] @seg.Content</div>
+        }
+        <table>
+            <thead><tr><th>片段</th><th>标签</th><th>起始</th><th>结束</th><th>备注</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var row in rows)
+                {
+                    <tr>
+                        <td>
+                            <select @bind="row.SegmentId">
+                                @foreach (var seg in taskSegments)
+                                {
+                                    <option value="@seg.Id">#@seg.Id</option>
+                                }
+                            </select>
+                        </td>
+                        <td>
+                            <select @bind="row.TagId">
+                                @foreach (var tag in tags)
+                                {
+                                    <option value="@tag.Id">@tag.Name</option>
+                                }
+                            </select>
+                        </td>
+                        <td><input type="number" min="0" @bind="row.Start" style="width:80px" /></td>
+                        <td><input type="number" min="0" @bind="row.End" style="width:80px" /></td>
+                        <td><input @bind="row.Note" /></td>
+                        <td><button class="small secondary" @onclick="() => rows.Remove(row)">删除</button></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <p>
+            <button class="secondary" @onclick="AddRow">+ 添加标注行</button>
+            <button @onclick="Submit">提交版本</button>
+        </p>
+    </div>
+}
+
+@code {
+    private List<AnnotationTask>? tasks;
+    private List<AssignmentView>? assignments;
+    private List<Segment>? taskSegments;
+    private List<Tag>? tags;
+    private string selectedTask = "";
+    private string selectedAssignment = "";
+    private string? error;
+    private string? message;
+
+    private class Row
+    {
+        public long SegmentId { get; set; }
+        public long TagId { get; set; }
+        public int Start { get; set; }
+        public int End { get; set; }
+        public string? Note { get; set; }
+    }
+
+    private readonly List<Row> rows = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            tasks = await Api.Tasks();
+            tags = await Api.Tags();
+        }
+        catch (ApiException e) { error = e.Message; }
+    }
+
+    private async Task OnTaskChanged(ChangeEventArgs e)
+    {
+        selectedTask = e.Value?.ToString() ?? "";
+        error = null;
+        assignments = null;
+        taskSegments = null;
+        if (long.TryParse(selectedTask, out var taskId))
+        {
+            try
+            {
+                assignments = await Api.Assignments(taskId);
+                taskSegments = await Api.TaskSegments(taskId);
+                if (rows.Count == 0) AddRow();
+            }
+            catch (ApiException ex) { error = ex.Message; }
+        }
+    }
+
+    private void AddRow()
+    {
+        rows.Add(new Row
+        {
+            SegmentId = taskSegments?.FirstOrDefault()?.Id ?? 0,
+            TagId = tags?.FirstOrDefault()?.Id ?? 0
+        });
+    }
+
+    private async Task Submit()
+    {
+        error = null; message = null;
+        if (!long.TryParse(selectedAssignment, out var assignmentId)) { error = "请选择分配"; return; }
+        if (rows.Count == 0) { error = "至少一条标注"; return; }
+        var req = new SubmitVersionRequest(assignmentId,
+            rows.Select(r => new AnnotationInput(r.SegmentId, r.TagId, r.Start, r.End,
+                string.IsNullOrWhiteSpace(r.Note) ? null : r.Note)).ToList());
+        try
+        {
+            var v = await Api.PostAsync<AnnotationVersion>("api/versions", req);
+            message = $"已提交版本 #{v.Id}（v{v.VersionNo}）";
+            rows.Clear();
+            AddRow();
+        }
+        catch (ApiException ex) { error = ex.Message; }
+    }
+}

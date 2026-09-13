@@ -1,0 +1,82 @@
+@page "/users"
+@inject ApiClient Api
+
+<h1>用户</h1>
+
+@if (error is not null) { <div class="error">@error</div> }
+@if (message is not null) { <div class="success">@message</div> }
+
+<div class="card">
+    @if (users is null)
+    {
+        <p class="muted">加载中…</p>
+    }
+    else
+    {
+        <table>
+            <thead><tr><th>ID</th><th>用户名</th><th>显示名</th><th>角色</th></tr></thead>
+            <tbody>
+                @foreach (var u in users)
+                {
+                    <tr>
+                        <td>@u.Id</td>
+                        <td class="mono">@u.Username</td>
+                        <td>@u.DisplayName</td>
+                        <td><span class="badge">@u.Role</span></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+<div class="card">
+    <h2>新建用户</h2>
+    <div class="row">
+        <div>
+            <label>用户名</label>
+            <input @bind="username" />
+        </div>
+        <div>
+            <label>显示名</label>
+            <input @bind="displayName" />
+        </div>
+        <div>
+            <label>角色</label>
+            <select @bind="role">
+                <option value="annotator">annotator（标注员）</option>
+                <option value="arbitrator">arbitrator（仲裁员）</option>
+                <option value="admin">admin（管理员）</option>
+            </select>
+        </div>
+        <div><button @onclick="Create">创建</button></div>
+    </div>
+</div>
+
+@code {
+    private List<AppUser>? users;
+    private string username = "";
+    private string displayName = "";
+    private string role = "annotator";
+    private string? error;
+    private string? message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { users = await Api.Users(); }
+        catch (ApiException e) { error = e.Message; }
+    }
+
+    private async Task Create()
+    {
+        error = null; message = null;
+        try
+        {
+            await Api.PostAsync<AppUser>("api/users", new CreateUserRequest(username, displayName, role));
+            message = $"用户 {username} 已创建";
+            username = ""; displayName = "";
+            users = await Api.Users();
+        }
+        catch (ApiException e) { error = e.Message; }
+    }
+}

@@ -1,0 +1,50 @@
+@page "/events"
+@inject ApiClient Api
+
+<h1>事件流 <span class="muted">（TimescaleDB hypertable · RabbitMQ 事件总线）</span></h1>
+
+@if (error is not null) { <div class="error">@error</div> }
+
+<p><button class="secondary" @onclick="Load">刷新</button></p>
+
+@if (events is null)
+{
+    <p class="muted">加载中…</p>
+}
+else if (events.Count == 0)
+{
+    <p class="muted">暂无事件。提交标注、分配任务或完成仲裁后会产生事件。</p>
+}
+else
+{
+    <table>
+        <thead><tr><th>时间</th><th>类型</th><th>片段</th><th>版本</th><th>操作者</th><th>负载</th></tr></thead>
+        <tbody>
+            @foreach (var e in events)
+            {
+                <tr>
+                    <td class="mono">@TextUtil.FmtTime(e.Time)</td>
+                    <td><span class="badge">@e.EventType</span></td>
+                    <td>@(e.SegmentId?.ToString() ?? "-")</td>
+                    <td>@(e.VersionId?.ToString() ?? "-")</td>
+                    <td>@(e.ActorId?.ToString() ?? "-")</td>
+                    <td class="mono" style="max-width:420px; overflow-wrap:anywhere;">@e.Payload</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<AnnotationEvent>? events;
+    private string? error;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    private async Task Load()
+    {
+        error = null;
+        try { events = await Api.Events(200); }
+        catch (ApiException e) { error = e.Message; }
+    }
+}

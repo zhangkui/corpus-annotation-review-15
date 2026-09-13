@@ -1,0 +1,13 @@
+# backend (sbt / play)
+backend/target/
+backend/project/target/
+backend/project/project/
+backend/logs/
+
+# frontend (dotnet)
+frontend/**/bin/
+frontend/**/obj/
+
+# misc
+*.log
+.DS_Store
